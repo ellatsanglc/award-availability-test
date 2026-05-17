@@ -1,0 +1,13 @@
+# Credentials — never commit these
+backend/.env
+
+# Browser session data
+backend/session_state.json
+backend/browser_profile/
+backend/debug_screenshots/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Award Availability</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Atmospheric background -->
+  <div class="bg-canvas" aria-hidden="true">
+    <div class="bg-orb bg-orb-1"></div>
+    <div class="bg-orb bg-orb-2"></div>
+    <div class="bg-orb bg-orb-3"></div>
+  </div>
+
+  <!-- Nav -->
+  <nav class="topnav">
+    <div class="nav-logo">
+      <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
+        <path d="M11 2 L20 11 L11 20 L2 11 Z" fill="none" stroke="rgba(0,196,188,0.7)" stroke-width="1.4"/>
+        <path d="M11 6 L16 11 L11 16 L6 11 Z" fill="rgba(0,196,188,0.2)" stroke="rgba(0,196,188,0.5)" stroke-width="0.8"/>
+        <circle cx="11" cy="11" r="1.8" fill="var(--teal)"/>
+      </svg>
+      <span class="nav-brand"><span class="nav-brand-white">Award</span> <span class="nav-brand-teal">Availability</span></span>
+    </div>
+    <span class="nav-divider"></span>
+    <p class="nav-tagline">Search award flights across multiple destinations and dates</p>
+  </nav>
+
+  <!-- ══ PAGE 1 — Search ══ -->
+  <div id="page1">
+    <section class="card search-panel">
+      <form id="searchForm" novalidate>
+
+        <div class="form-row">
+          <div class="field">
+            <label>Origin</label>
+            <div class="airport-wrap" id="originWrap">
+              <div class="airport-tags-row" id="originTagsRow">
+                <input id="originSearch" type="text" placeholder="Search city or code…" autocomplete="off" />
+              </div>
+              <div class="airport-dropdown hidden" id="originDropdown"></div>
+            </div>
+            <input id="origin" type="hidden" value="HKG" />
+          </div>
+
+          <div class="field">
+            <label>Trip Type</label>
+            <div class="seg-control">
+              <label class="seg-option">
+                <input type="radio" name="tripType" value="one_way" checked />
+                <span>One way</span>
+              </label>
+              <label class="seg-option">
+                <input type="radio" name="tripType" value="return" />
+                <span>Return</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Destinations <span class="hint" id="destHint">— loading airports…</span></label>
+          <div class="airport-wrap" id="airportWrap">
+            <div class="airport-tags-row" id="airportTagsRow">
+              <input id="airportSearch" type="text" placeholder="Search city or code…" autocomplete="off" />
+            </div>
+            <div class="airport-dropdown hidden" id="airportDropdown"></div>
+          </div>
+          <input id="destinations" type="text" placeholder="NRT, SIN, BKK" class="hidden" />
+        </div>
+
+        <div class="field">
+          <label>Departure date</label>
+          <div class="dep-date-row">
+            <div class="dep-date-col">
+              <div class="date-picker-wrap" id="depStartWrap">
+                <div class="date-picker-display" tabindex="0">Select date</div>
+                <input type="hidden" id="depStart" />
+                <div class="date-picker-cal hidden"></div>
+              </div>
+            </div>
+            <div class="dep-date-col hidden" id="depEndCol">
+              <div class="date-picker-wrap" id="depEndWrap">
+                <div class="date-picker-display" tabindex="0">Select date</div>
+                <input type="hidden" id="depEnd" />
+                <div class="date-picker-cal hidden"></div>
+              </div>
+            </div>
+            <label class="check-opt dep-flex-label">
+              <input type="checkbox" id="flexDep" />
+              <span>Flexible dates</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="return-only" id="nightsSection">
+          <div class="field">
+            <label>Nights away</label>
+            <div id="exactNightsWrap">
+              <input id="exactNights" type="number" value="7" min="1" max="60" style="width:80px" />
+            </div>
+            <div class="form-row hidden" id="flexNightsRow">
+              <div class="field">
+                <label for="minNights">Min nights</label>
+                <input id="minNights" type="number" value="5" min="1" max="60" />
+              </div>
+              <div class="field">
+                <label for="maxNights">Max nights</label>
+                <input id="maxNights" type="number" value="9" min="1" max="60" />
+              </div>
+            </div>
+            <label class="check-opt nights-flex-toggle">
+              <input type="checkbox" id="flexNights" />
+              <span>Flexible range</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Cabin Class</label>
+          <div class="check-group">
+            <label class="check-opt"><input type="checkbox" name="cabin" value="economy" checked /><span>Economy</span></label>
+            <label class="check-opt"><input type="checkbox" name="cabin" value="premium_economy" /><span>Premium Economy</span></label>
+            <label class="check-opt"><input type="checkbox" name="cabin" value="business" /><span>Business</span></label>
+            <label class="check-opt"><input type="checkbox" name="cabin" value="first" /><span>First</span></label>
+          </div>
+        </div>
+
+        <div id="searchEstimate" class="search-estimate hidden"></div>
+
+        <div class="form-actions">
+          <button type="submit" id="searchBtn" class="btn-primary">Search Flights ✈️</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <!-- ══ PAGE 2 — Results ══ -->
+  <div id="page2" class="hidden">
+
+    <!-- Top bar: back + trip summary + progress -->
+    <div class="results-topbar card">
+      <div class="topbar-left">
+        <button id="backBtn" class="btn-back">← New Search</button>
+        <div id="tripSummary" class="trip-summary"></div>
+      </div>
+      <div class="topbar-right">
+        <div id="progressSection" class="progress-inline">
+          <div class="progress-bar-wrap">
+            <div id="progressBar" class="progress-bar" style="width:0%"></div>
+          </div>
+          <div class="progress-row">
+            <span id="progressText" class="progress-text">Initialising…</span>
+            <span id="progressEta" class="progress-eta"></span>
+          </div>
+        </div>
+        <button type="button" id="cancelBtn" class="btn-secondary hidden">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Login prompt -->
+    <div id="loginPrompt" class="login-prompt hidden">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;margin-top:2px">
+        <circle cx="10" cy="10" r="9" stroke="rgba(0,196,188,0.7)" stroke-width="1.5"/>
+        <path d="M10 6v5M10 13v1" stroke="rgba(0,196,188,0.7)" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <div>
+        <span id="loginMsg"></span>
+        <br/><br/>
+        <button id="continueBtn" class="btn-secondary">Continue manually</button>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <section id="resultsSection" class="hidden">
+      <div id="itinerarySection" class="itinerary-section hidden"></div>
+      <div class="results-meta">
+        <span id="resultsSummary" class="results-summary"></span>
+        <div class="results-controls">
+          <label class="toggle-label"><input type="checkbox" id="availableOnly" checked /> Available only</label>
+          <button id="exportBtn" class="btn-secondary">Export CSV</button>
+        </div>
+      </div>
+      <div id="flightsLayout" class="flights-layout">
+        <div id="outboundCol" class="flights-col">
+          <div class="col-header">
+            <span class="col-title">Outbound</span>
+            <span id="outboundCount" class="col-count"></span>
+          </div>
+          <div id="outboundResults" class="col-flights"></div>
+        </div>
+        <div id="inboundCol" class="flights-col hidden">
+          <div class="col-header">
+            <span class="col-title">Return</span>
+            <span id="inboundCount" class="col-count"></span>
+          </div>
+          <div id="inboundResults" class="col-flights"></div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- OTP modal -->
+  <div id="otpModal" class="otp-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="otpTitle">
+    <div class="otp-modal">
+      <h3 id="otpTitle">Verification Required</h3>
+      <p>Cathay Pacific sent a 6-digit code to your registered phone or email. Enter it below to continue.</p>
+      <div class="otp-inputs" id="otpInputs">
+        <input class="otp-box" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]" autocomplete="one-time-code">
+        <input class="otp-box" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="otp-box" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="otp-box" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="otp-box" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+        <input class="otp-box" type="tel" maxlength="1" inputmode="numeric" pattern="[0-9]">
+      </div>
+      <button id="otpSubmitBtn" class="btn-primary" disabled>Submit Code</button>
+    </div>
+  </div>
+
+  <script src="app.js?v=15"></script>
+</body>
+</html>
