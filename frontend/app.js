@@ -1,7 +1,7 @@
 /* ── Environment ── */
 const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
   ? ''
-  : 'https://RAILWAY_URL_HERE';
+  : 'https://award-availability-test-production.up.railway.app';
 
 /* ── State ── */
 let allResults = [];
