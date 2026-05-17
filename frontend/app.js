@@ -1,3 +1,8 @@
+/* ── Environment ── */
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? ''
+  : 'https://RAILWAY_URL_HERE';
+
 /* ── State ── */
 let allResults = [];
 let currentSearchId = null;
@@ -53,7 +58,7 @@ otpSubmitBtn.addEventListener('click', async () => {
   otpSubmitBtn.disabled = true;
   otpSubmitBtn.textContent = 'Submitting…';
   try {
-    await fetch(`/api/search/${currentSearchId}/otp`, {
+    await fetch(`${API_BASE}/api/search/${currentSearchId}/otp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code }),
@@ -166,7 +171,7 @@ document.getElementById('flexDep').addEventListener('change', e => {
 async function loadAirports() {
   const hint = document.getElementById('destHint');
   try {
-    const res = await fetch('/api/destinations');
+    const res = await fetch(`${API_BASE}/api/destinations`);
     if (!res.ok) throw new Error(res.statusText);
     allAirports = await res.json();
     hint.textContent = `— ${allAirports.length} destinations available`;
@@ -413,7 +418,7 @@ async function startSearch(payload) {
 
   let res;
   try {
-    res = await fetch('/api/search', {
+    res = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -434,7 +439,7 @@ async function startSearch(payload) {
   const { search_id, total_searches } = await res.json();
   currentSearchId = search_id;
 
-  eventSource = new EventSource(`/api/results/${search_id}/stream`);
+  eventSource = new EventSource(`${API_BASE}/api/results/${search_id}/stream`);
 
   eventSource.addEventListener('progress', e => {
     const d = JSON.parse(e.data);
@@ -496,14 +501,14 @@ continueBtn.addEventListener('click', async () => {
   if (!currentSearchId) return;
   continueBtn.disabled = true;
   continueBtn.textContent = 'Starting search…';
-  await fetch(`/api/search/${currentSearchId}/continue`, { method: 'POST' }).catch(() => {});
+  await fetch(`${API_BASE}/api/search/${currentSearchId}/continue`, { method: 'POST' }).catch(() => {});
 });
 
 /* ── Cancel ── */
 cancelBtn.addEventListener('click', async () => {
   if (!currentSearchId) return;
   eventSource?.close();
-  await fetch(`/api/search/${currentSearchId}`, { method: 'DELETE' }).catch(() => {});
+  await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE' }).catch(() => {});
   progressText.textContent = 'Search cancelled.';
   progressEta.textContent = '';
   resetUI();
@@ -513,7 +518,7 @@ cancelBtn.addEventListener('click', async () => {
 backBtn.addEventListener('click', async () => {
   if (currentSearchId && eventSource) {
     eventSource.close();
-    await fetch(`/api/search/${currentSearchId}`, { method: 'DELETE' }).catch(() => {});
+    await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE' }).catch(() => {});
     eventSource = null;
     currentSearchId = null;
   }
@@ -603,8 +608,16 @@ function parseTaxes(t) {
   return m ? parseInt(m[0].replace(/,/g, '')) : 0;
 }
 
+function isDirectFlight(r) {
+  const s = (r._flight?.stops || '').toLowerCase().trim();
+  return !s || s === '0' || s === '0 stops' || s === 'non-stop' || s === 'direct' || s === '—';
+}
+
 function defaultCompare(a, b) {
   if (a.available !== b.available) return a.available ? -1 : 1;
+  const aDirect = isDirectFlight(a) ? 0 : 1;
+  const bDirect = isDirectFlight(b) ? 0 : 1;
+  if (aDirect !== bDirect) return aDirect - bDirect;
   const aM = a._flight?.miles ?? Infinity;
   const bM = b._flight?.miles ?? Infinity;
   if (aM !== bM) return aM - bM;
@@ -644,6 +657,9 @@ function findGroupBest(flights) {
   const avail = flights.filter(r => r.available && r._flight?.miles != null);
   if (!avail.length) return null;
   return [...avail].sort((a, b) => {
+    const aDirect = isDirectFlight(a) ? 0 : 1;
+    const bDirect = isDirectFlight(b) ? 0 : 1;
+    if (aDirect !== bDirect) return aDirect - bDirect;
     const aM = a._flight.miles, bM = b._flight.miles;
     if (aM !== bM) return aM - bM;
     const aT = parseTaxes(a._flight?.taxes), bT = parseTaxes(b._flight?.taxes);
@@ -656,17 +672,28 @@ function findGroupBest(flights) {
 function autoSelectBest(rows) {
   const CABIN_PRIORITY = ['first', 'business', 'premium_economy', 'economy'];
   const searched = currentPayload?.cabin_classes || [];
-  for (const cabin of CABIN_PRIORITY) {
-    if (!searched.includes(cabin)) continue;
-    const cabinRows = rows.filter(r => r.cabin_class === cabin && r.available && r._flight?.miles != null);
-    if (!cabinRows.length) continue;
-    return [...cabinRows].sort((a, b) => {
-      if (a.departure_date !== b.departure_date) return a.departure_date.localeCompare(b.departure_date);
-      if (a._flight.miles !== b._flight.miles) return a._flight.miles - b._flight.miles;
-      return parseTaxes(a._flight?.taxes) - parseTaxes(b._flight?.taxes);
-    })[0];
-  }
-  return null;
+  const avail = rows.filter(r => r.available && r._flight?.miles != null && searched.includes(r.cabin_class));
+  if (!avail.length) return null;
+  return [...avail].sort((a, b) => {
+    // 1. Direct flight beats any connecting flight
+    const aDirect = isDirectFlight(a) ? 0 : 1;
+    const bDirect = isDirectFlight(b) ? 0 : 1;
+    if (aDirect !== bDirect) return aDirect - bDirect;
+    // 2. Highest cabin class
+    const aCabin = CABIN_PRIORITY.indexOf(a.cabin_class);
+    const bCabin = CABIN_PRIORITY.indexOf(b.cabin_class);
+    if (aCabin !== bCabin) return aCabin - bCabin;
+    // 3. Lowest miles
+    if (a._flight.miles !== b._flight.miles) return a._flight.miles - b._flight.miles;
+    // 4. Lowest taxes
+    const aT = parseTaxes(a._flight?.taxes), bT = parseTaxes(b._flight?.taxes);
+    if (aT !== bT) return aT - bT;
+    // 5. Shortest duration
+    const aDur = parseDuration(a._flight?.duration), bDur = parseDuration(b._flight?.duration);
+    if (aDur !== bDur) return aDur - bDur;
+    // 6. Earliest date
+    return a.departure_date.localeCompare(b.departure_date);
+  })[0];
 }
 
 function getMinReturnDate(outboundRow) {
