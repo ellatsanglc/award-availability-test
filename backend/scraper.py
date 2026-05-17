@@ -1565,15 +1565,15 @@ async def _navigate_date_strip(page: Page, target_date: date) -> bool:
             const day = {day_num};
             const name = '{day_name}';
 
-            // Date strip sits in the top ~150px. Each tab is a small box with
+            // Date strip sits in the top ~200px. Each tab is a small box with
             // the 3-letter day name + date number (e.g. "FRI\\n15").
             const candidates = [];
             for (const el of document.querySelectorAll('*')) {{
                 const rect = el.getBoundingClientRect();
-                if (rect.top < 0 || rect.top > 150) continue;
-                if (rect.width < 20 || rect.width > 200 || rect.height < 20) continue;
+                if (rect.top < 0 || rect.top > 250) continue;
+                if (rect.width < 20 || rect.width > 250 || rect.height < 20) continue;
                 // Avoid huge containers — only leaf-ish nodes
-                if (el.querySelectorAll('*').length > 12) continue;
+                if (el.querySelectorAll('*').length > 20) continue;
                 const txt = (el.innerText || el.textContent || '').trim().toUpperCase().replace(/\\s+/g, ' ');
                 if (txt.includes(String(day)) && txt.includes(name)) {{
                     candidates.push(el);
@@ -1829,10 +1829,13 @@ async def _navigate_back_to_outbound(page: Page, outbound_url: Optional[str] = N
         }""")
 
         if not is_inbound:
-            ok = await page.evaluate(
-                "() => document.body.innerText.includes('Flight details') "
-                "&& document.body.innerText.trim().length > 200"
-            )
+            ok = await page.evaluate("""() => {
+                const t = document.body.innerText;
+                if (t.trim().length < 200) return false;
+                return t.includes('Flight details')
+                    || /\\b\\d{2}:\\d{2}\\b/.test(t)
+                    || /\\bCX\\d+\\b/.test(t);
+            }""")
             logger.info("_navigate_back_to_outbound: already on outbound page (ok=%s)", ok)
             return bool(ok)
 
@@ -1849,23 +1852,41 @@ async def _navigate_back_to_outbound(page: Page, outbound_url: Optional[str] = N
                         break
                 await asyncio.sleep(1)
             await asyncio.sleep(1)  # extra render buffer
-            ok = await page.evaluate(
-                "() => document.body.innerText.includes('Flight details') "
-                "&& document.body.innerText.trim().length > 200"
-            )
+            ok = await page.evaluate("""() => {
+                const t = document.body.innerText;
+                if (t.trim().length < 200) return false;
+                return t.includes('Flight details')
+                    || /\\b\\d{2}:\\d{2}\\b/.test(t)
+                    || /\\bCX\\d+\\b/.test(t);
+            }""")
             logger.info("_navigate_back_to_outbound: url_goto → %s", "ok" if ok else "failed")
             if ok:
                 return True
 
-        # Fallback: page.go_back()
-        await page.go_back(wait_until="domcontentloaded", timeout=15000)
-        await asyncio.sleep(2)
-        ok = await page.evaluate(
-            "() => document.body.innerText.includes('Flight details') "
-            "&& document.body.innerText.trim().length > 200"
-        )
-        logger.info("_navigate_back_to_outbound: go_back → %s", "ok" if ok else "failed")
-        return bool(ok)
+        # Fallback: page.go_back().
+        # go_back() sometimes throws "Execution context was destroyed" during SPA
+        # navigation even though the browser DID go back. Catch the error and check
+        # the page content anyway — if the navigation worked we can continue.
+        try:
+            await page.go_back(wait_until="domcontentloaded", timeout=15000)
+        except Exception as go_exc:
+            logger.info("_navigate_back_to_outbound: go_back threw (%s) — checking page anyway", go_exc)
+            await asyncio.sleep(3)
+        else:
+            await asyncio.sleep(2)
+        try:
+            ok = await page.evaluate("""() => {
+                const t = document.body.innerText;
+                if (t.trim().length < 200) return false;
+                return t.includes('Flight details')
+                    || /\\b\\d{2}:\\d{2}\\b/.test(t)
+                    || /\\bCX\\d+\\b/.test(t);
+            }""")
+            logger.info("_navigate_back_to_outbound: go_back → %s", "ok" if ok else "failed")
+            return bool(ok)
+        except Exception:
+            logger.warning("_navigate_back_to_outbound: evaluate after go_back failed")
+            return False
     except Exception as exc:
         logger.warning("_navigate_back_to_outbound: %s", exc)
         return False
@@ -1948,12 +1969,17 @@ async def _get_visible_cabin_tabs(page: Page) -> set:
     labels = await page.evaluate("""() => {
         const cabinNames = ['Economy', 'Premium Economy', 'Business', 'First'];
         const found = new Set();
-        for (const el of document.querySelectorAll('[role="tab"], button, [role="button"]')) {
+        // Cathay uses large clickable div-cards for cabin selection, not standard
+        // <button> or role="tab" elements. Scan all visible elements in the upper
+        // portion of the page and match by text content.
+        for (const el of document.querySelectorAll('*')) {
             const rect = el.getBoundingClientRect();
             if (rect.width < 60 || rect.height < 15 || rect.top < 10 || rect.top > 700) continue;
+            if (rect.width > 600) continue;  // skip full-width containers
             const txt = (el.innerText || el.textContent || '').trim();
             for (const name of cabinNames) {
-                if (txt === name || txt.startsWith(name + '\\n') || txt.startsWith(name + ' ')) {
+                // Match exact name or name followed by whitespace/newline (e.g. "Economy\nFROM...")
+                if (txt === name || txt.startsWith(name + '\\n') || txt.startsWith(name + '\\r') || txt.startsWith(name + ' ')) {
                     found.add(name);
                 }
             }
@@ -1967,6 +1993,8 @@ async def _get_visible_cabin_tabs(page: Page) -> set:
             result.add(key)
     if result:
         logger.info("_get_visible_cabin_tabs: %s", sorted(result))
+    else:
+        logger.info("_get_visible_cabin_tabs: no cabin tabs detected (raw labels=%s)", labels)
     return result
 
 
@@ -2322,24 +2350,7 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
                                 await asyncio.sleep(0.5)
                             result = await extract_results(page, request.origin, dest, dep, ret, cabin)
                             results_cabin = cabin
-                            if ret and result.flights:
-                                available_out = [f for f in result.flights if f.available and f.miles]
-                                if available_out:
-                                    cheapest_out = min(available_out, key=lambda f: f.miles)
-                                    outbound_url = page.url
-                                    inbound = await _select_outbound_and_get_inbound(page, dest, cheapest_out.miles)
-                                    if inbound:
-                                        result.inbound_flights = inbound
-                                        available_in = [f for f in inbound if f.available and f.miles]
-                                        if available_in:
-                                            best_in = min(available_in, key=lambda f: f.miles)
-                                            result.inbound = best_in
-                                            result.total_miles = (cheapest_out.miles or 0) + (best_in.miles or 0)
-                                    on_outbound_page = await _navigate_back_to_outbound(page, outbound_url)
-                                else:
-                                    on_outbound_page = True
-                            else:
-                                on_outbound_page = True
+                            on_outbound_page = True  # cabin tab never leaves the outbound page
                         except Exception as exc:
                             if "TargetClosedError" in type(exc).__name__ or "Target page" in str(exc):
                                 await queue.put({"type": "error", "message": "Browser window was closed — search stopped."})
@@ -2377,24 +2388,7 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
                                 pass  # already marked for full search
                             else:
                                 result = await extract_results(page, request.origin, dest, dep, ret, cabin)
-                                if ret and result.flights:
-                                    available_out = [f for f in result.flights if f.available and f.miles]
-                                    if available_out:
-                                        cheapest_out = min(available_out, key=lambda f: f.miles)
-                                        outbound_url = page.url
-                                        inbound = await _select_outbound_and_get_inbound(page, dest, cheapest_out.miles)
-                                        if inbound:
-                                            result.inbound_flights = inbound
-                                            available_in = [f for f in inbound if f.available and f.miles]
-                                            if available_in:
-                                                best_in = min(available_in, key=lambda f: f.miles)
-                                                result.inbound = best_in
-                                                result.total_miles = (cheapest_out.miles or 0) + (best_in.miles or 0)
-                                        on_outbound_page = await _navigate_back_to_outbound(page, outbound_url)
-                                    else:
-                                        on_outbound_page = True
-                                else:
-                                    on_outbound_page = True
+                                on_outbound_page = True  # date strip never leaves the outbound page
                         except Exception as exc:
                             if "TargetClosedError" in type(exc).__name__ or "Target page" in str(exc):
                                 await queue.put({"type": "error", "message": "Browser window was closed — search stopped."})
