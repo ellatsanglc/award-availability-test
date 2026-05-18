@@ -22,6 +22,7 @@ class SearchRequest(BaseModel):
     departure_date_end: date
     min_nights: Optional[int] = None  # return trips: minimum nights away
     max_nights: Optional[int] = None  # return trips: maximum nights away
+    session_id: Optional[str] = None  # browser UUID from localStorage (for per-user profiles)
 
     def total_searches(self) -> int:
         return len(self.get_combinations())

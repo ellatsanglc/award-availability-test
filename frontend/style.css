@@ -829,6 +829,22 @@ tr.row-no-flights:hover td { background: rgba(251,191,36,0.07); }
 .dp-day:hover:not([disabled]) { background: var(--teal-dim); color: var(--teal); }
 .dp-day[disabled] { color: rgba(226,236,244,0.15); cursor: default; }
 .dp-day.dp-selected { background: var(--teal); color: #071018; font-weight: 700; }
+.dp-day.dp-in-range { background: var(--teal-dim); color: var(--teal); border-radius: 0; }
+.dp-day.dp-hover-end { background: rgba(0,196,188,0.25); color: var(--teal); border-radius: 6px; }
+
+.dp-range-hint {
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--teal);
+  opacity: 0.7;
+  margin-top: 8px;
+  letter-spacing: 0.04em;
+  padding: 4px 0 0;
+  border-top: 1px solid rgba(0,196,188,0.15);
+}
+
+/* ── Return mode seg control ── */
+.return-mode-seg { max-width: 280px; }
 
 /* ── Departure date layout ── */
 .dep-date-row { display: flex; align-items: center; gap: 10px; }
@@ -837,9 +853,51 @@ tr.row-no-flights:hover td { background: rgba(251,191,36,0.07); }
 
 /* ── Nights row ── */
 .nights-flex-toggle { margin-top: 8px; }
-#exactNightsWrap { margin-bottom: 4px; }
 .nights-row { display: flex; align-items: center; gap: 14px; }
 .nights-row input[type="number"] { width: 80px; }
+
+/* ── Nights stepper ── */
+.nights-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: var(--shadow-input);
+}
+
+.nights-step-btn {
+  background: none;
+  border: none;
+  padding: 8px 16px;
+  font-size: 1.05rem;
+  line-height: 1;
+  color: var(--teal);
+  cursor: pointer;
+  transition: background 0.12s;
+  font-family: 'DM Sans', sans-serif;
+}
+.nights-step-btn:hover { background: var(--teal-dim); }
+.nights-step-btn:active { background: rgba(0,196,188,0.28); }
+
+.nights-stepper input[type="number"] {
+  border: none;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  text-align: center;
+  width: 60px;
+  padding: 8px 4px;
+  box-shadow: none;
+  background: transparent;
+  font-size: 0.94rem;
+  font-weight: 500;
+}
+
+.nights-stepper input[type="number"]::-webkit-inner-spin-button,
+.nights-stepper input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+.nights-stepper input[type="number"] { -moz-appearance: textfield; }
 
 /* ── OTP Modal ── */
 .otp-overlay {
@@ -1670,4 +1728,77 @@ tr.row-no-flights:hover td { background: rgba(251,191,36,0.07); }
 
 .flight-selected:hover {
   background: rgba(0,196,188,0.14) !important;
+}
+
+/* ── Session status badge ── */
+.session-status {
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 5px 10px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  min-height: 26px;
+  transition: opacity 0.2s;
+}
+.session-status.ok {
+  background: rgba(0,196,188,0.12);
+  color: var(--teal);
+  border: 1px solid rgba(0,196,188,0.25);
+}
+.session-status.pending {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+/* ── Virtual browser panel ── */
+.vb-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.vb-hint {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.vb-wrap {
+  position: relative;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #111;
+  max-height: 480px;
+}
+.vb-screen {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 480px;
+  object-fit: contain;
+}
+.vb-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+.vb-key-input {
+  width: 100%;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  color: var(--text);
+  font-size: 0.87rem;
+  outline: none;
+  caret-color: transparent;
+}
+.vb-key-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--teal-glow);
+}
+.vb-note {
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  line-height: 1.5;
 }

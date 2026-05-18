@@ -21,7 +21,8 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from models import SearchRequest
-from scraper import run_search_job, scrape_all_destinations
+from scraper import (run_search_job, scrape_all_destinations,
+                     active_pages, get_screenshot_b64, get_session_profile_dir)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -62,7 +63,7 @@ async def start_search(request: SearchRequest):
 
     async def _safe_run():
         try:
-            await run_search_job(request, queue, login_event, otp_event, otp_holder)
+            await run_search_job(request, queue, login_event, otp_event, otp_holder, search_id=search_id)
         except Exception as exc:
             logging.exception("run_search_job crashed: %s", exc)
             try:
@@ -172,6 +173,43 @@ async def get_destinations():
         return await scrape_all_destinations()
     except Exception as e:
         raise HTTPException(500, f"Could not load destinations: {e}")
+
+
+@app.get("/api/search/{search_id}/screenshot")
+async def get_screenshot(search_id: str):
+    """Return a base64 JPEG screenshot of the current browser page (for the virtual login panel)."""
+    page = active_pages.get(search_id)
+    if not page:
+        raise HTTPException(404, "No active browser session for this search.")
+    img = await get_screenshot_b64(page)
+    return {"image": img}
+
+
+@app.post("/api/search/{search_id}/interact")
+async def interact(search_id: str, body: dict):
+    """Relay a click or keystroke to the Playwright browser (for the virtual login panel)."""
+    page = active_pages.get(search_id)
+    if not page:
+        raise HTTPException(404, "No active browser session.")
+    action = body.get("action")
+    try:
+        if action == "click":
+            vp = page.viewport_size or {"width": 1280, "height": 800}
+            await page.mouse.click(body["x"] * vp["width"], body["y"] * vp["height"])
+        elif action == "type":
+            await page.keyboard.type(str(body.get("text", "")))
+        elif action == "key":
+            await page.keyboard.press(str(body.get("key", "")))
+    except Exception as e:
+        raise HTTPException(500, f"Interact failed: {e}")
+    return {"status": "ok"}
+
+
+@app.get("/api/session/{session_id}/status")
+async def session_status(session_id: str):
+    """Check whether a saved session is still authenticated (reads a flag file — no browser needed)."""
+    profile_dir = get_session_profile_dir(session_id)
+    return {"logged_in": (profile_dir / "logged_in.flag").exists()}
 
 
 @app.delete("/api/search/{search_id}")

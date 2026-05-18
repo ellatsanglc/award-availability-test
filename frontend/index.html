@@ -79,15 +79,9 @@
           <label>Departure date</label>
           <div class="dep-date-row">
             <div class="dep-date-col">
-              <div class="date-picker-wrap" id="depStartWrap">
+              <div class="date-picker-wrap" id="depRangeWrap">
                 <div class="date-picker-display" tabindex="0">Select date</div>
                 <input type="hidden" id="depStart" />
-                <div class="date-picker-cal hidden"></div>
-              </div>
-            </div>
-            <div class="dep-date-col hidden" id="depEndCol">
-              <div class="date-picker-wrap" id="depEndWrap">
-                <div class="date-picker-display" tabindex="0">Select date</div>
                 <input type="hidden" id="depEnd" />
                 <div class="date-picker-cal hidden"></div>
               </div>
@@ -101,21 +95,63 @@
 
         <div class="return-only" id="nightsSection">
           <div class="field">
-            <label>Nights away</label>
-            <div id="exactNightsWrap">
-              <input id="exactNights" type="number" value="7" min="1" max="60" style="width:80px" />
+            <label>Return</label>
+            <div class="seg-control return-mode-seg">
+              <label class="seg-option">
+                <input type="radio" name="returnMode" value="return_date" checked />
+                <span>Return date</span>
+              </label>
+              <label class="seg-option">
+                <input type="radio" name="returnMode" value="nights_away" />
+                <span>Nights away</span>
+              </label>
             </div>
-            <div class="form-row hidden" id="flexNightsRow">
+          </div>
+
+          <div id="returnDateMode">
+            <div class="dep-date-row" style="margin-top:8px">
+              <div class="dep-date-col">
+                <div class="date-picker-wrap" id="retStartWrap">
+                  <div class="date-picker-display" tabindex="0">Select date</div>
+                  <input type="hidden" id="retStart" />
+                  <input type="hidden" id="retEnd" />
+                  <div class="date-picker-cal hidden"></div>
+                </div>
+              </div>
+              <label class="check-opt dep-flex-label">
+                <input type="checkbox" id="flexRet" />
+                <span>Flexible dates</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="nightsAwayMode" class="hidden" style="margin-top:8px">
+            <div id="exactNightsWrap">
+              <div class="nights-stepper">
+                <button type="button" class="nights-step-btn" id="nightsMinus">−</button>
+                <input id="exactNights" type="number" value="5" min="1" max="60" />
+                <button type="button" class="nights-step-btn" id="nightsPlus">+</button>
+              </div>
+            </div>
+            <div class="form-row hidden" id="flexNightsRow" style="margin-top:10px">
               <div class="field">
                 <label for="minNights">Min nights</label>
-                <input id="minNights" type="number" value="5" min="1" max="60" />
+                <div class="nights-stepper">
+                  <button type="button" class="nights-step-btn" id="minNightsMinus">−</button>
+                  <input id="minNights" type="number" value="3" min="1" max="60" />
+                  <button type="button" class="nights-step-btn" id="minNightsPlus">+</button>
+                </div>
               </div>
               <div class="field">
                 <label for="maxNights">Max nights</label>
-                <input id="maxNights" type="number" value="9" min="1" max="60" />
+                <div class="nights-stepper">
+                  <button type="button" class="nights-step-btn" id="maxNightsMinus">−</button>
+                  <input id="maxNights" type="number" value="9" min="1" max="60" />
+                  <button type="button" class="nights-step-btn" id="maxNightsPlus">+</button>
+                </div>
               </div>
             </div>
-            <label class="check-opt nights-flex-toggle">
+            <label class="check-opt nights-flex-toggle" style="margin-top:8px">
               <input type="checkbox" id="flexNights" />
               <span>Flexible range</span>
             </label>
@@ -133,6 +169,8 @@
         </div>
 
         <div id="searchEstimate" class="search-estimate hidden"></div>
+
+        <div id="sessionStatus" class="session-status"></div>
 
         <div class="form-actions">
           <button type="submit" id="searchBtn" class="btn-primary">Search Flights ✈️</button>
@@ -164,17 +202,18 @@
       </div>
     </div>
 
-    <!-- Login prompt -->
+    <!-- Login prompt / Virtual browser panel -->
     <div id="loginPrompt" class="login-prompt hidden">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0;margin-top:2px">
-        <circle cx="10" cy="10" r="9" stroke="rgba(0,196,188,0.7)" stroke-width="1.5"/>
-        <path d="M10 6v5M10 13v1" stroke="rgba(0,196,188,0.7)" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <div>
-        <span id="loginMsg"></span>
-        <br/><br/>
-        <button id="continueBtn" class="btn-secondary">Continue manually</button>
+      <div id="vbPanel" class="vb-panel">
+        <p class="vb-hint">Log in to your Asia Miles account below — you're interacting with the real Cathay Pacific website.</p>
+        <div class="vb-wrap">
+          <img id="vbScreen" class="vb-screen" alt="Cathay Pacific login" />
+          <div id="vbOverlay" class="vb-overlay"></div>
+        </div>
+        <input id="vbKeyInput" class="vb-key-input" placeholder="Click above first, then type here to send keystrokes…" autocomplete="off" spellcheck="false" />
+        <p class="vb-note">🔒 Nothing you enter is stored by this app. Your session is saved so you won't need to log in again next time.</p>
       </div>
+      <button id="continueBtn" class="btn-secondary" style="margin-top:12px">I've logged in — continue</button>
     </div>
 
     <!-- Results -->
@@ -225,6 +264,6 @@
   </div>
 
   <script src="config.js"></script>
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>

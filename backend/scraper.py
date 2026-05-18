@@ -13,6 +13,7 @@ so subsequent runs skip the login step.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -34,8 +35,9 @@ logger = logging.getLogger(__name__)
 
 CATHAY_HOME = "https://www.cathaypacific.com/cx/en_HK.html"  # login lives here
 BOOKING_URL = "https://flights.cathaypacific.com/en_HK.html"  # award search lives here
-PROFILE_DIR = Path(__file__).parent / "browser_profile"  # persistent login lives here
-SESSION_FILE = Path(__file__).parent / "session_state.json"  # explicit cookie snapshot (incl. session cookies)
+PROFILE_DIR = Path(__file__).parent / "browser_profile"  # legacy single-user profile
+SESSION_FILE = Path(__file__).parent / "session_state.json"  # legacy session snapshot
+SESSION_PROFILES_DIR = Path(__file__).parent / "session_profiles"  # per-user profiles
 AIRPORTS_CACHE = Path(__file__).parent / "destinations.json"
 SEARCH_DELAY_SECONDS = 3
 
@@ -58,6 +60,23 @@ CHROMIUM_ARGS = [
 ]
 
 _airports_lock: Optional[asyncio.Lock] = None
+
+# In-memory map of search_id → active Playwright Page (for screenshot/interact endpoints)
+active_pages: dict = {}
+
+
+def get_session_profile_dir(session_id: str) -> Path:
+    """Return (and create) a per-user browser profile directory."""
+    safe_id = re.sub(r'[^a-zA-Z0-9\-]', '', session_id or 'default')[:64] or 'default'
+    d = SESSION_PROFILES_DIR / safe_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+async def get_screenshot_b64(page) -> str:
+    """Capture the current page as a base64 JPEG for the virtual browser panel."""
+    buf = await page.screenshot(type="jpeg", quality=70)
+    return base64.b64encode(buf).decode()
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +353,7 @@ async def is_logged_in(page: Page) -> str:
         return 'unknown'
 
 
-async def wait_for_login(page: Page, login_event: asyncio.Event, timeout_seconds: int = 300):
+async def wait_for_login(page: Page, login_event: asyncio.Event, timeout_seconds: int = 300, session_file=None):
     """
     Auto-detect login by polling the page every 2 seconds.
     Also unblocks immediately if the user clicks the Continue button (fallback).
@@ -352,8 +371,9 @@ async def wait_for_login(page: Page, login_event: asyncio.Event, timeout_seconds
             logger.info("Login auto-detected — proceeding")
             login_event.set()
             try:
-                await page.context.storage_state(path=str(SESSION_FILE))
-                logger.info("wait_for_login: session state saved")
+                _sf = session_file or SESSION_FILE
+                await page.context.storage_state(path=str(_sf))
+                logger.info("wait_for_login: session state saved to %s", _sf.name)
             except Exception as _e:
                 logger.warning("wait_for_login: could not save session state: %s", _e)
             return True
@@ -2181,7 +2201,7 @@ async def search_one_flight(
 # Main job runner (called as a background task from main.py)
 # ---------------------------------------------------------------------------
 
-async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_event: asyncio.Event, otp_event: asyncio.Event = None, otp_holder: list = None):
+async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_event: asyncio.Event, otp_event: asyncio.Event = None, otp_holder: list = None, search_id: str = None):
     """
     Orchestrates the full search: login check → iterate combinations → stream results.
     Puts dicts onto `queue` with a 'type' key:
@@ -2201,9 +2221,11 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
         # Persistent context = real browser profile on disk.
         # - Cathay's site won't detect automation (no AutomationControlled flag)
         # - Login is remembered across runs (stored in PROFILE_DIR)
-        PROFILE_DIR.mkdir(exist_ok=True)
+        session_id = getattr(request, 'session_id', None) or 'default'
+        profile_dir = get_session_profile_dir(session_id)
+        session_file = profile_dir / "session_state.json"
         ctx: BrowserContext = await pw.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
+            user_data_dir=str(profile_dir),
             headless=IS_CLOUD,
             channel=None if IS_CLOUD else "chrome",
             viewport={"width": 1280, "height": 800},
@@ -2222,18 +2244,20 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
         # expiry date — Cathay's auth token is a session cookie (no Expires), so it
         # is cleared every time the browser closes. storage_state.json captures ALL
         # cookies (including session cookies) and re-injects them here before navigation.
-        if SESSION_FILE.exists():
+        if session_file.exists():
             try:
-                saved = json.loads(SESSION_FILE.read_text())
+                saved = json.loads(session_file.read_text())
                 cookies = saved.get("cookies", [])
                 if cookies:
                     await ctx.add_cookies(cookies)
-                    logger.info("run_search_job: restored %d session cookies from %s", len(cookies), SESSION_FILE.name)
+                    logger.info("run_search_job: restored %d cookies from %s", len(cookies), session_file.name)
             except Exception as _e:
-                logger.warning("run_search_job: could not restore session cookies: %s", _e)
+                logger.warning("run_search_job: could not restore cookies: %s", _e)
 
         # Use the first open page or create one
         page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        if search_id:
+            active_pages[search_id] = page
 
         # --- Login check ---
         # Navigate to the main Cathay page and poll for auth state.
@@ -2264,24 +2288,23 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
             await asyncio.sleep(1)
 
         if needs_login:
-            # Try automated login first using stored credentials
-            auto_logged_in = await auto_login(page, queue=queue, otp_event=otp_event, otp_holder=otp_holder)
-
-            if not auto_logged_in:
-                # Fall back to asking the user to log in manually
-                await queue.put({
-                    "type": "login",
-                    "message": (
-                        "Please log in to your Asia Miles account in the browser window that opened. "
-                        "The search will start automatically once your login is detected — "
-                        "or click Continue if it doesn't start within a few seconds."
-                    ),
-                })
-                logged_in = await wait_for_login(page, login_event, timeout_seconds=300)
-                if not logged_in:
-                    await queue.put({"type": "error", "message": "Login timed out after 5 minutes."})
-                    await ctx.close()
-                    return
+            # Show virtual browser panel — user logs in directly on the Cathay site
+            await queue.put({
+                "type": "login",
+                "message": "Please log in to your Asia Miles account using the panel below.",
+            })
+            logged_in = await wait_for_login(page, login_event, timeout_seconds=300, session_file=session_file)
+            if not logged_in:
+                if search_id:
+                    active_pages.pop(search_id, None)
+                await queue.put({"type": "error", "message": "Login timed out after 5 minutes."})
+                await ctx.close()
+                return
+            (profile_dir / "logged_in.flag").touch()
+            await queue.put({"type": "login_complete"})
+        else:
+            # Already logged in from saved session — refresh the flag
+            (profile_dir / "logged_in.flag").touch()
 
         # --- Run searches ---
         # Sort by (destination, nights, departure_date, cabin_order) so that:
@@ -2476,7 +2499,8 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
             if i < total:
                 await asyncio.sleep(SEARCH_DELAY_SECONDS)
 
-        # Profile is saved automatically to PROFILE_DIR — no manual save needed
+        if search_id:
+            active_pages.pop(search_id, None)
         await ctx.close()
 
     await queue.put({"type": "complete"})

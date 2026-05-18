@@ -4,6 +4,13 @@ const API_BASE = isLocal ? '' : (window.BACKEND_URL || '');
 // Bypass ngrok browser interstitial warning page on non-local requests
 const FETCH_HEADERS = isLocal ? {} : { 'ngrok-skip-browser-warning': '1' };
 
+/* ── Session ID (per-browser UUID for persistent login profiles) ── */
+let sessionId = localStorage.getItem('cathay_session_id');
+if (!sessionId) {
+  sessionId = crypto.randomUUID();
+  localStorage.setItem('cathay_session_id', sessionId);
+}
+
 /* ── State ── */
 let allResults = [];
 let currentSearchId = null;
@@ -80,8 +87,12 @@ const progressBar    = document.getElementById('progressBar');
 const progressText   = document.getElementById('progressText');
 const progressEta    = document.getElementById('progressEta');
 const loginPrompt    = document.getElementById('loginPrompt');
-const loginMsg       = document.getElementById('loginMsg');
 const continueBtn    = document.getElementById('continueBtn');
+const sessionStatus  = document.getElementById('sessionStatus');
+const vbPanel        = document.getElementById('vbPanel');
+const vbScreen       = document.getElementById('vbScreen');
+const vbOverlay      = document.getElementById('vbOverlay');
+const vbKeyInput     = document.getElementById('vbKeyInput');
 const resultsSec     = document.getElementById('resultsSection');
 const resultsSummary = document.getElementById('resultsSummary');
 const searchEstimate = document.getElementById('searchEstimate');
@@ -92,6 +103,82 @@ const page2          = document.getElementById('page2');
 const backBtn        = document.getElementById('backBtn');
 const flightsLayout  = document.getElementById('flightsLayout');
 const inboundCol     = document.getElementById('inboundCol');
+
+/* ── Session status badge ── */
+async function checkSessionStatus() {
+  if (!sessionStatus) return;
+  try {
+    const r = await fetch(`${API_BASE}/api/session/${sessionId}/status`, { headers: FETCH_HEADERS });
+    const d = await r.json();
+    sessionStatus.textContent = d.logged_in
+      ? '✓ Logged in — ready to search'
+      : 'Login required — you\'ll be prompted when you search';
+    sessionStatus.className = 'session-status ' + (d.logged_in ? 'ok' : 'pending');
+  } catch {
+    sessionStatus.textContent = '';
+    sessionStatus.className = 'session-status';
+  }
+}
+checkSessionStatus();
+
+/* ── Virtual browser panel — screenshot polling ── */
+let screenshotInterval = null;
+
+function startScreenshotPolling() {
+  if (screenshotInterval) return;
+  screenshotInterval = setInterval(async () => {
+    if (!currentSearchId) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/search/${currentSearchId}/screenshot`, { headers: FETCH_HEADERS });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.image) vbScreen.src = 'data:image/jpeg;base64,' + d.image;
+    } catch {}
+  }, 700);
+}
+
+function stopScreenshotPolling() {
+  clearInterval(screenshotInterval);
+  screenshotInterval = null;
+}
+
+/* ── Virtual browser panel — click relay ── */
+vbOverlay.addEventListener('click', e => {
+  if (!currentSearchId) return;
+  const rect = vbScreen.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width;
+  const y = (e.clientY - rect.top) / rect.height;
+  fetch(`${API_BASE}/api/search/${currentSearchId}/interact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...FETCH_HEADERS },
+    body: JSON.stringify({ action: 'click', x, y }),
+  }).catch(() => {});
+  vbKeyInput.focus();
+});
+
+/* ── Virtual browser panel — keystroke relay ── */
+vbKeyInput.addEventListener('keydown', e => {
+  if (!currentSearchId) return;
+  const specials = ['Enter', 'Backspace', 'Tab', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Escape'];
+  if (specials.includes(e.key)) {
+    e.preventDefault();
+    fetch(`${API_BASE}/api/search/${currentSearchId}/interact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...FETCH_HEADERS },
+      body: JSON.stringify({ action: 'key', key: e.key }),
+    }).catch(() => {});
+  }
+});
+
+vbKeyInput.addEventListener('input', e => {
+  if (!currentSearchId || !e.data) return;
+  fetch(`${API_BASE}/api/search/${currentSearchId}/interact`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...FETCH_HEADERS },
+    body: JSON.stringify({ action: 'type', text: e.data }),
+  }).catch(() => {});
+  vbKeyInput.value = '';
+});
 
 /* ── Trip type toggle ── */
 document.querySelectorAll('input[name="tripType"]').forEach(radio => {
@@ -109,14 +196,7 @@ function calcSearchCount() {
   const cabins = getSelectedCabins();
   const depStart  = document.getElementById('depStart').value;
   const isFlexDep = document.getElementById('flexDep')?.checked;
-  const depEnd    = isFlexDep ? document.getElementById('depEnd').value : depStart;
-  const isFlexNights = document.getElementById('flexNights')?.checked;
-  const minN = isFlexNights
-    ? parseInt(document.getElementById('minNights').value) || 1
-    : parseInt(document.getElementById('exactNights').value) || 7;
-  const maxN = isFlexNights
-    ? parseInt(document.getElementById('maxNights').value) || 7
-    : parseInt(document.getElementById('exactNights').value) || 7;
+  const depEnd    = isFlexDep ? (document.getElementById('depEnd').value || depStart) : depStart;
 
   if (!destinations.length || !depStart || !depEnd) return null;
 
@@ -125,7 +205,30 @@ function calcSearchCount() {
   if (endDate < startDate) return null;
 
   const depDays = Math.floor((endDate - startDate) / 86400000) + 1;
-  const nightsRange = tripType === 'return' ? Math.max(0, maxN - minN + 1) : 1;
+
+  let nightsRange = 1;
+  if (tripType === 'return') {
+    const returnMode = document.querySelector('input[name="returnMode"]:checked')?.value || 'return_date';
+    if (returnMode === 'return_date') {
+      const retStart = document.getElementById('retStart').value;
+      const flexRet  = document.getElementById('flexRet')?.checked;
+      const retEnd   = flexRet ? (document.getElementById('retEnd').value || retStart) : retStart;
+      if (retStart && retEnd) {
+        const retS = new Date(retStart), retE = new Date(retEnd);
+        nightsRange = Math.max(1, Math.floor((retE - retS) / 86400000) + 1);
+      }
+    } else {
+      const isFlexNights = document.getElementById('flexNights')?.checked;
+      const minN = isFlexNights
+        ? parseInt(document.getElementById('minNights').value) || 1
+        : parseInt(document.getElementById('exactNights').value) || 5;
+      const maxN = isFlexNights
+        ? parseInt(document.getElementById('maxNights').value) || 7
+        : parseInt(document.getElementById('exactNights').value) || 5;
+      nightsRange = Math.max(0, maxN - minN + 1);
+    }
+  }
+
   const total = depDays * destinations.length * cabins.length * nightsRange;
   return { total, depDays, nightsRange };
 }
@@ -138,15 +241,17 @@ function updateEstimate() {
   const isWarn = mins > 20;
 
   const nDest = getDestinations().length;
-  const isFlexNightsDisp = document.getElementById('flexNights')?.checked;
   const tripTypeVal = document.querySelector('input[name="tripType"]:checked')?.value;
+  const returnMode  = document.querySelector('input[name="returnMode"]:checked')?.value || 'return_date';
+  const isFlexNightsDisp = returnMode === 'nights_away' && document.getElementById('flexNights')?.checked;
+  const showNightsRange = tripTypeVal === 'return' && info.nightsRange > 1;
+  const nightsLabel = returnMode === 'return_date' ? 'return date options' : 'night options';
   searchEstimate.textContent =
     `${info.total} search${info.total !== 1 ? 'es' : ''} ` +
     `(~${mins < 1 ? '<1' : mins} min) — ` +
     `${info.depDays} departure day${info.depDays !== 1 ? 's' : ''} × ` +
     `${nDest} destination${nDest !== 1 ? 's' : ''}` +
-    (tripTypeVal === 'return' && isFlexNightsDisp && info.nightsRange > 1
-      ? ` × ${info.nightsRange} night options` : '');
+    (showNightsRange ? ` × ${info.nightsRange} ${nightsLabel}` : '');
 
   searchEstimate.className = 'search-estimate ' + (isWarn ? 'warn' : 'ok');
   searchEstimate.classList.remove('hidden');
@@ -157,15 +262,6 @@ function updateEstimate() {
 });
 document.querySelectorAll('input[name="cabin"]').forEach(cb => {
   cb.addEventListener('change', updateEstimate);
-});
-document.getElementById('flexNights').addEventListener('change', e => {
-  document.getElementById('exactNightsWrap').classList.toggle('hidden', e.target.checked);
-  document.getElementById('flexNightsRow').classList.toggle('hidden', !e.target.checked);
-  updateEstimate();
-});
-document.getElementById('flexDep').addEventListener('change', e => {
-  document.getElementById('depEndCol').classList.toggle('hidden', !e.target.checked);
-  updateEstimate();
 });
 
 /* ── Airport multi-select widget ── */
@@ -364,17 +460,36 @@ form.addEventListener('submit', async e => {
   const tripType  = document.querySelector('input[name="tripType"]:checked').value;
   const depStart  = document.getElementById('depStart').value;
   const isFlexDep = document.getElementById('flexDep').checked;
-  const depEnd    = isFlexDep ? document.getElementById('depEnd').value : depStart;
+  const depEnd    = isFlexDep ? (document.getElementById('depEnd').value || depStart) : depStart;
   if (!depStart) return alert('Select a departure date.');
   if (isFlexDep && !depEnd) return alert('Select an end date for the flexible departure range.');
 
-  const isFlexNights = document.getElementById('flexNights').checked;
-  const nightsMin = isFlexNights
-    ? parseInt(document.getElementById('minNights').value)
-    : parseInt(document.getElementById('exactNights').value);
-  const nightsMax = isFlexNights
-    ? parseInt(document.getElementById('maxNights').value)
-    : parseInt(document.getElementById('exactNights').value);
+  let nightsMin = null, nightsMax = null;
+  if (tripType === 'return') {
+    const returnMode = document.querySelector('input[name="returnMode"]:checked')?.value || 'return_date';
+    if (returnMode === 'return_date') {
+      const retStart = document.getElementById('retStart').value;
+      const flexRet  = document.getElementById('flexRet').checked;
+      const retEnd   = flexRet ? (document.getElementById('retEnd').value || retStart) : retStart;
+      if (!retStart) return alert('Select a return date.');
+      const depStartDate = new Date(depStart + 'T00:00:00');
+      const depEndDate   = new Date(depEnd   + 'T00:00:00');
+      const retStartDate = new Date(retStart + 'T00:00:00');
+      const retEndDate   = new Date(retEnd   + 'T00:00:00');
+      nightsMin = Math.round((retStartDate - depEndDate)   / 86400000);
+      nightsMax = Math.round((retEndDate   - depStartDate) / 86400000);
+      if (nightsMin < 1) nightsMin = 1;
+      if (nightsMax < nightsMin) nightsMax = nightsMin;
+    } else {
+      const isFlexNights = document.getElementById('flexNights').checked;
+      nightsMin = isFlexNights
+        ? parseInt(document.getElementById('minNights').value)
+        : parseInt(document.getElementById('exactNights').value);
+      nightsMax = isFlexNights
+        ? parseInt(document.getElementById('maxNights').value)
+        : parseInt(document.getElementById('exactNights').value);
+    }
+  }
 
   const payload = {
     origin:               document.getElementById('origin').value.trim().toUpperCase() || 'HKG',
@@ -385,6 +500,7 @@ form.addEventListener('submit', async e => {
     departure_date_end:   depEnd,
     min_nights: tripType === 'return' ? nightsMin : null,
     max_nights: tripType === 'return' ? nightsMax : null,
+    session_id:           sessionId,
   };
 
   startSearch(payload);
@@ -457,10 +573,15 @@ async function startSearch(payload) {
     }
   });
 
-  eventSource.addEventListener('login', e => {
-    const d = JSON.parse(e.data);
+  eventSource.addEventListener('login', () => {
     loginPrompt.classList.remove('hidden');
-    loginMsg.textContent = d.message;
+    startScreenshotPolling();
+  });
+
+  eventSource.addEventListener('login_complete', () => {
+    stopScreenshotPolling();
+    loginPrompt.classList.add('hidden');
+    checkSessionStatus();
   });
 
   eventSource.addEventListener('otp', () => {
@@ -479,6 +600,7 @@ async function startSearch(payload) {
   eventSource.addEventListener('complete', () => {
     setProgress(1, `Search complete — ${allResults.length} combinations checked.`);
     progressEta.textContent = '';
+    stopScreenshotPolling();
     loginPrompt.classList.add('hidden');
     otpModal.classList.add('hidden');
     resetUI(false);
@@ -489,6 +611,8 @@ async function startSearch(payload) {
       const d = JSON.parse(e.data);
       alert('Search error: ' + d.message);
     } catch (_) {}
+    stopScreenshotPolling();
+    loginPrompt.classList.add('hidden');
     otpModal.classList.add('hidden');
     resetUI();
   });
@@ -510,6 +634,8 @@ continueBtn.addEventListener('click', async () => {
 cancelBtn.addEventListener('click', async () => {
   if (!currentSearchId) return;
   eventSource?.close();
+  stopScreenshotPolling();
+  loginPrompt.classList.add('hidden');
   await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE', headers: FETCH_HEADERS }).catch(() => {});
   progressText.textContent = 'Search cancelled.';
   progressEta.textContent = '';
@@ -1063,27 +1189,58 @@ exportBtn.addEventListener('click', () => {
   URL.revokeObjectURL(url);
 });
 
-/* ── Custom date picker ── */
-function createDatePicker(wrapperId, hiddenId) {
-  const wrap   = document.getElementById(wrapperId);
-  const hidden = document.getElementById(hiddenId);
-  const disp   = wrap.querySelector('.date-picker-display');
-  const cal    = wrap.querySelector('.date-picker-cal');
+/* ── Custom date picker (supports single and range mode) ── */
+function createDatePicker(wrapperId, startId, endId) {
+  const wrap       = document.getElementById(wrapperId);
+  const startHid   = document.getElementById(startId);
+  const endHid     = endId ? document.getElementById(endId) : null;
+  const disp       = wrap.querySelector('.date-picker-display');
+  const cal        = wrap.querySelector('.date-picker-cal');
 
   const MONTHS  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   const M_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const DAY_ABB = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
-  let viewYear  = new Date().getFullYear();
-  let viewMonth = new Date().getMonth();
-  let selected  = null;
+  let viewYear   = new Date().getFullYear();
+  let viewMonth  = new Date().getMonth();
+  let startDate  = null;
+  let endDate    = null;
+  let hoverDate  = null;
+  let rangeMode  = false;
+  let awaitEnd   = false;
   let minDateVal = null;
 
   function toIso(d) {
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
-  function fmtDisp(d) {
+  function fmtLong(d) {
     return `${DAY_ABB[d.getDay()]}, ${d.getDate()} ${M_SHORT[d.getMonth()]} ${d.getFullYear()}`;
+  }
+  function fmtShort(d) {
+    return `${d.getDate()} ${M_SHORT[d.getMonth()]}`;
+  }
+
+  function updateDisplay() {
+    if (rangeMode) {
+      if (startDate && endDate) {
+        disp.textContent = `${fmtShort(startDate)} → ${fmtShort(endDate)}`;
+        disp.classList.add('dp-has-value');
+      } else if (startDate) {
+        disp.textContent = `${fmtShort(startDate)} → …`;
+        disp.classList.add('dp-has-value');
+      } else {
+        disp.textContent = 'Select date range';
+        disp.classList.remove('dp-has-value');
+      }
+    } else {
+      if (startDate) {
+        disp.textContent = fmtLong(startDate);
+        disp.classList.add('dp-has-value');
+      } else {
+        disp.textContent = 'Select date';
+        disp.classList.remove('dp-has-value');
+      }
+    }
   }
 
   function renderCal() {
@@ -1104,16 +1261,39 @@ function createDatePicker(wrapperId, hiddenId) {
       <span class="dp-dow">We</span><span class="dp-dow">Th</span><span class="dp-dow">Fr</span>
       <span class="dp-dow">Sa</span>`;
 
+    // Compute effective range for hover highlight
+    const lo = startDate ? startDate : null;
+    const hi = rangeMode && awaitEnd && hoverDate && hoverDate > (startDate || 0) ? hoverDate
+             : (endDate && endDate > startDate ? endDate : null);
+
     for (let i = 0; i < firstDay; i++) html += '<span></span>';
     for (let d = 1; d <= daysInMo; d++) {
       const dt        = new Date(viewYear, viewMonth, d);
       const beforeMin = minDateVal && dt < minDateVal;
       const disabled  = dt < today || beforeMin;
-      const sel       = selected && dt.getTime() === selected.getTime();
-      const cls       = ['dp-day', disabled ? 'dp-past' : '', sel ? 'dp-selected' : ''].filter(Boolean).join(' ');
-      html += `<button type="button" class="${cls}" data-val="${toIso(dt)}" ${disabled ? 'disabled' : ''}>${d}</button>`;
+
+      let cls = ['dp-day'];
+      if (disabled) {
+        cls.push('dp-past');
+      } else {
+        const isStart = startDate && dt.getTime() === startDate.getTime();
+        const isEnd   = endDate   && dt.getTime() === endDate.getTime();
+        const isHover = rangeMode && awaitEnd && hoverDate && dt.getTime() === hoverDate.getTime();
+        const inRange = rangeMode && lo && hi && dt > lo && dt < hi;
+        if (isStart || isEnd) cls.push('dp-selected');
+        if (inRange) cls.push('dp-in-range');
+        if (isHover && !isStart) cls.push('dp-hover-end');
+      }
+
+      html += `<button type="button" class="${cls.join(' ')}" data-val="${toIso(dt)}" ${disabled ? 'disabled' : ''}>${d}</button>`;
     }
     html += '</div>';
+
+    // Add hint label when awaiting second date
+    if (rangeMode && awaitEnd) {
+      html += `<div class="dp-range-hint">Now pick the end date</div>`;
+    }
+
     cal.innerHTML = html;
 
     cal.querySelectorAll('.dp-nav:not([disabled])').forEach(btn => {
@@ -1126,24 +1306,83 @@ function createDatePicker(wrapperId, hiddenId) {
       });
     });
 
+    // Hover: update classes in-place (no re-render to avoid DOM detachment on click)
+    const allDayBtns = [...cal.querySelectorAll('.dp-day')];
+    cal.querySelector('.dp-grid')?.addEventListener('mouseleave', () => {
+      if (rangeMode && awaitEnd) {
+        allDayBtns.forEach(b => b.classList.remove('dp-in-range', 'dp-hover-end'));
+        hoverDate = null;
+      }
+    });
+
     cal.querySelectorAll('.dp-day:not([disabled])').forEach(btn => {
+      btn.addEventListener('mouseenter', () => {
+        if (!rangeMode || !awaitEnd) return;
+        hoverDate = new Date(btn.dataset.val + 'T00:00:00');
+        allDayBtns.forEach(b => {
+          b.classList.remove('dp-in-range', 'dp-hover-end');
+          if (!b.disabled && startDate) {
+            const d = new Date(b.dataset.val + 'T00:00:00');
+            if (d.getTime() === hoverDate.getTime() && d > startDate) b.classList.add('dp-hover-end');
+            if (d > startDate && d < hoverDate) b.classList.add('dp-in-range');
+          }
+        });
+      });
+
       btn.addEventListener('click', e => {
         e.stopPropagation();
-        selected = new Date(btn.dataset.val + 'T00:00:00');
-        hidden.value = btn.dataset.val;
-        disp.textContent = fmtDisp(selected);
-        disp.classList.add('dp-has-value');
-        cal.classList.add('hidden');
-        hidden.dispatchEvent(new Event('change', { bubbles: false }));
-        updateEstimate();
+        const clicked = new Date(btn.dataset.val + 'T00:00:00');
+
+        if (!rangeMode) {
+          startDate = clicked;
+          endDate   = null;
+          startHid.value = btn.dataset.val;
+          if (endHid) endHid.value = '';
+          updateDisplay();
+          cal.classList.add('hidden');
+          startHid.dispatchEvent(new Event('change', { bubbles: false }));
+          updateEstimate();
+        } else if (!awaitEnd) {
+          // First click in range mode
+          startDate = clicked;
+          endDate   = null;
+          startHid.value = btn.dataset.val;
+          if (endHid) endHid.value = '';
+          awaitEnd  = true;
+          hoverDate = null;
+          // Re-render so selected state resets and hint appears
+          updateDisplay();
+          renderCal();  // safe here — no pending click on the old nodes
+        } else {
+          // Second click — if before or same as start, restart
+          if (clicked <= startDate) {
+            // Treat as new start — just reset in-place, re-render on next frame
+            startDate = clicked;
+            startHid.value = btn.dataset.val;
+            if (endHid) endHid.value = '';
+            endDate   = null;
+            hoverDate = null;
+            updateDisplay();
+            setTimeout(renderCal, 0);
+          } else {
+            endDate = clicked;
+            if (endHid) endHid.value = btn.dataset.val;
+            awaitEnd  = false;
+            hoverDate = null;
+            updateDisplay();
+            cal.classList.add('hidden');
+            startHid.dispatchEvent(new Event('change', { bubbles: false }));
+            updateEstimate();
+          }
+        }
       });
     });
   }
 
   function openCal() {
     document.querySelectorAll('.date-picker-cal').forEach(c => { if (c !== cal) c.classList.add('hidden'); });
-    if (selected) {
-      viewYear = selected.getFullYear(); viewMonth = selected.getMonth();
+    if (startDate) {
+      viewYear = startDate.getFullYear(); viewMonth = startDate.getMonth();
     } else if (minDateVal) {
       viewYear = minDateVal.getFullYear(); viewMonth = minDateVal.getMonth();
     } else {
@@ -1161,27 +1400,43 @@ function createDatePicker(wrapperId, hiddenId) {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCal(); }
   });
   document.addEventListener('click', e => {
-    if (!wrap.contains(e.target)) cal.classList.add('hidden');
+    if (!wrap.contains(e.target)) {
+      if (awaitEnd) {
+        awaitEnd  = false;
+        endDate   = null;
+        hoverDate = null;
+        if (endHid) endHid.value = '';
+        updateDisplay();
+      }
+      cal.classList.add('hidden');
+    }
   });
 
   return {
-    getValue: () => hidden.value,
+    getValue:    () => startHid.value,
+    getEndValue: () => endHid?.value || '',
     setValue(dateStr) {
-      hidden.value = dateStr;
-      selected   = new Date(dateStr + 'T00:00:00');
-      viewYear   = selected.getFullYear();
-      viewMonth  = selected.getMonth();
-      disp.textContent = fmtDisp(selected);
-      disp.classList.add('dp-has-value');
+      startHid.value = dateStr;
+      startDate = new Date(dateStr + 'T00:00:00');
+      viewYear  = startDate.getFullYear();
+      viewMonth = startDate.getMonth();
+      updateDisplay();
     },
     clearValue() {
-      hidden.value = '';
-      selected = null;
-      disp.textContent = 'Select date';
-      disp.classList.remove('dp-has-value');
+      startHid.value = '';
+      if (endHid) endHid.value = '';
+      startDate = endDate = hoverDate = null;
+      awaitEnd  = false;
+      updateDisplay();
     },
     setMinDate(dateStr) {
       minDateVal = dateStr ? new Date(dateStr + 'T00:00:00') : null;
+    },
+    setRangeMode(enabled) {
+      rangeMode = enabled;
+      awaitEnd  = false;
+      if (!enabled && endHid) { endHid.value = ''; endDate = null; }
+      updateDisplay();
     },
   };
 }
@@ -1278,21 +1533,66 @@ function initOriginWidget() {
 
   const start = new Date(today); start.setDate(start.getDate() + 3);
 
-  const depStartPicker = createDatePicker('depStartWrap', 'depStart');
-  const depEndPicker   = createDatePicker('depEndWrap',   'depEnd');
-  depStartPicker.setValue(fmt(start));
+  const depPicker = createDatePicker('depRangeWrap', 'depStart', 'depEnd');
+  depPicker.setValue(fmt(start));
 
-  document.getElementById('depStart').addEventListener('change', () => {
-    const startVal = document.getElementById('depStart').value;
-    depEndPicker.setMinDate(startVal);
-    const endVal = document.getElementById('depEnd').value;
-    if (endVal && endVal <= startVal) depEndPicker.clearValue();
+  const retPicker = createDatePicker('retStartWrap', 'retStart', 'retEnd');
+  retPicker.setMinDate(fmt(start));
+
+  // Flexible departure — toggle range mode on single picker
+  document.getElementById('flexDep').addEventListener('change', e => {
+    depPicker.setRangeMode(e.target.checked);
     updateEstimate();
   });
+
+  // Flexible return — toggle range mode on return picker
+  document.getElementById('flexRet').addEventListener('change', e => {
+    retPicker.setRangeMode(e.target.checked);
+    updateEstimate();
+  });
+
+  // Return mode toggle (Return date vs Nights away)
+  document.querySelectorAll('input[name="returnMode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const isReturnDate = radio.value === 'return_date';
+      document.getElementById('returnDateMode').classList.toggle('hidden', !isReturnDate);
+      document.getElementById('nightsAwayMode').classList.toggle('hidden',  isReturnDate);
+      updateEstimate();
+    });
+  });
+
+  // Flexible nights (nights away mode)
+  document.getElementById('flexNights').addEventListener('change', e => {
+    document.getElementById('exactNightsWrap').classList.toggle('hidden',  e.target.checked);
+    document.getElementById('flexNightsRow').classList.toggle('hidden',   !e.target.checked);
+    updateEstimate();
+  });
+
+  // +/- steppers for nights
+  function makeStep(inputId, delta) {
+    return () => {
+      const el = document.getElementById(inputId);
+      el.value = Math.min(60, Math.max(1, (parseInt(el.value) || 5) + delta));
+      updateEstimate();
+    };
+  }
+  document.getElementById('nightsMinus')?.addEventListener('click', makeStep('exactNights', -1));
+  document.getElementById('nightsPlus')?.addEventListener('click',  makeStep('exactNights',  1));
+  document.getElementById('minNightsMinus')?.addEventListener('click', makeStep('minNights', -1));
+  document.getElementById('minNightsPlus')?.addEventListener('click',  makeStep('minNights',  1));
+  document.getElementById('maxNightsMinus')?.addEventListener('click', makeStep('maxNights', -1));
+  document.getElementById('maxNightsPlus')?.addEventListener('click',  makeStep('maxNights',  1));
+
+  // Update estimate when return date changes; set min date on ret picker when dep changes
+  document.getElementById('depStart').addEventListener('change', () => {
+    retPicker.setMinDate(document.getElementById('depStart').value);
+    updateEstimate();
+  });
+  document.getElementById('retStart').addEventListener('change', updateEstimate);
+  document.getElementById('retEnd').addEventListener('change', updateEstimate);
 
   document.querySelector('.return-only').classList.add('hidden-field');
 
   await loadAirports();
-
   updateEstimate();
 })();
