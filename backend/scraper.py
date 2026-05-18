@@ -39,6 +39,21 @@ SESSION_FILE = Path(__file__).parent / "session_state.json"  # explicit cookie s
 AIRPORTS_CACHE = Path(__file__).parent / "destinations.json"
 SEARCH_DELAY_SECONDS = 3
 
+# True when running on Railway (or any cloud environment without a display)
+IS_CLOUD = "RAILWAY_ENVIRONMENT" in os.environ
+
+CHROMIUM_ARGS = [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-default-apps",
+    # Required in Docker/cloud — Chromium won't start without these
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+]
+
 _airports_lock: Optional[asyncio.Lock] = None
 
 
@@ -125,16 +140,10 @@ async def scrape_all_destinations() -> List[dict]:
             async with async_playwright() as pw:
                 ctx = await pw.chromium.launch_persistent_context(
                     user_data_dir=tmp_dir,
-                    headless=False,
-                    channel="chrome",
+                    headless=IS_CLOUD,
+                    channel=None if IS_CLOUD else "chrome",
                     viewport={"width": 1280, "height": 800},
-                    args=[
-                        "--disable-blink-features=AutomationControlled",
-                        "--disable-infobars",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                        "--disable-default-apps",
-                    ],
+                    args=CHROMIUM_ARGS,
                     ignore_https_errors=True,
                 )
                 ctx.on("page", lambda popup: asyncio.ensure_future(popup.close()))
@@ -2189,16 +2198,10 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
         PROFILE_DIR.mkdir(exist_ok=True)
         ctx: BrowserContext = await pw.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
-            headless=False,
-            channel="chrome",
+            headless=IS_CLOUD,
+            channel=None if IS_CLOUD else "chrome",
             viewport={"width": 1280, "height": 800},
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-infobars",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-default-apps",
-            ],
+            args=CHROMIUM_ARGS,
             ignore_https_errors=True,
         )
 
