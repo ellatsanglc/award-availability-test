@@ -52,6 +52,9 @@ CHROMIUM_ARGS = [
     "--no-sandbox",
     "--disable-setuid-sandbox",
     "--disable-dev-shm-usage",
+    # HTTP/2 can cause ERR_HTTP2_PROTOCOL_ERROR in containerised environments
+    "--disable-http2",
+    "--disable-quic",
 ]
 
 _airports_lock: Optional[asyncio.Lock] = None
