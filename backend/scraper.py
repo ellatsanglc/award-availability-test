@@ -2288,18 +2288,22 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
             await asyncio.sleep(1)
 
         if needs_login:
-            # Show virtual browser panel — user logs in directly on the Cathay site
-            await queue.put({
-                "type": "login",
-                "message": "Please log in to your Asia Miles account using the panel below.",
-            })
-            logged_in = await wait_for_login(page, login_event, timeout_seconds=300, session_file=session_file)
-            if not logged_in:
-                if search_id:
-                    active_pages.pop(search_id, None)
-                await queue.put({"type": "error", "message": "Login timed out after 5 minutes."})
-                await ctx.close()
-                return
+            # Try automated login with credentials from .env first
+            auto_logged_in = await auto_login(page, queue=queue, otp_event=otp_event, otp_holder=otp_holder)
+
+            if not auto_logged_in:
+                # Fall back to virtual browser panel — user logs in directly on Cathay site
+                await queue.put({
+                    "type": "login",
+                    "message": "Please log in to your Asia Miles account using the panel below.",
+                })
+                logged_in = await wait_for_login(page, login_event, timeout_seconds=300, session_file=session_file)
+                if not logged_in:
+                    if search_id:
+                        active_pages.pop(search_id, None)
+                    await queue.put({"type": "error", "message": "Login timed out after 5 minutes."})
+                    await ctx.close()
+                    return
             (profile_dir / "logged_in.flag").touch()
             await queue.put({"type": "login_complete"})
         else:
