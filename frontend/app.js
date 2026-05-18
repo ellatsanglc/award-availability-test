@@ -1,7 +1,6 @@
 /* ── Environment ── */
-const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-  ? ''
-  : 'https://award-availability-test-production.up.railway.app';
+const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_BASE = isLocal ? '' : (window.BACKEND_URL || '');
 
 /* ── State ── */
 let allResults = [];
