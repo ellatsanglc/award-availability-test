@@ -1,6 +1,8 @@
 /* ── Environment ── */
 const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const API_BASE = isLocal ? '' : (window.BACKEND_URL || '');
+// Bypass ngrok browser interstitial warning page on non-local requests
+const FETCH_HEADERS = isLocal ? {} : { 'ngrok-skip-browser-warning': '1' };
 
 /* ── State ── */
 let allResults = [];
@@ -59,7 +61,7 @@ otpSubmitBtn.addEventListener('click', async () => {
   try {
     await fetch(`${API_BASE}/api/search/${currentSearchId}/otp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...FETCH_HEADERS },
       body: JSON.stringify({ code }),
     });
   } catch (_) {}
@@ -170,7 +172,7 @@ document.getElementById('flexDep').addEventListener('change', e => {
 async function loadAirports() {
   const hint = document.getElementById('destHint');
   try {
-    const res = await fetch(`${API_BASE}/api/destinations`);
+    const res = await fetch(`${API_BASE}/api/destinations`, { headers: FETCH_HEADERS });
     if (!res.ok) throw new Error(res.statusText);
     allAirports = await res.json();
     hint.textContent = `— ${allAirports.length} destinations available`;
@@ -419,7 +421,7 @@ async function startSearch(payload) {
   try {
     res = await fetch(`${API_BASE}/api/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...FETCH_HEADERS },
       body: JSON.stringify(payload),
     });
   } catch (err) {
@@ -438,7 +440,8 @@ async function startSearch(payload) {
   const { search_id, total_searches } = await res.json();
   currentSearchId = search_id;
 
-  eventSource = new EventSource(`${API_BASE}/api/results/${search_id}/stream`);
+  const streamUrl = `${API_BASE}/api/results/${search_id}/stream` + (isLocal ? '' : '?ngrok-skip-browser-warning=1');
+  eventSource = new EventSource(streamUrl);
 
   eventSource.addEventListener('progress', e => {
     const d = JSON.parse(e.data);
@@ -500,14 +503,14 @@ continueBtn.addEventListener('click', async () => {
   if (!currentSearchId) return;
   continueBtn.disabled = true;
   continueBtn.textContent = 'Starting search…';
-  await fetch(`${API_BASE}/api/search/${currentSearchId}/continue`, { method: 'POST' }).catch(() => {});
+  await fetch(`${API_BASE}/api/search/${currentSearchId}/continue`, { method: 'POST', headers: FETCH_HEADERS }).catch(() => {});
 });
 
 /* ── Cancel ── */
 cancelBtn.addEventListener('click', async () => {
   if (!currentSearchId) return;
   eventSource?.close();
-  await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE' }).catch(() => {});
+  await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE', headers: FETCH_HEADERS }).catch(() => {});
   progressText.textContent = 'Search cancelled.';
   progressEta.textContent = '';
   resetUI();
@@ -517,7 +520,7 @@ cancelBtn.addEventListener('click', async () => {
 backBtn.addEventListener('click', async () => {
   if (currentSearchId && eventSource) {
     eventSource.close();
-    await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE' }).catch(() => {});
+    await fetch(`${API_BASE}/api/search/${currentSearchId}`, { method: 'DELETE', headers: FETCH_HEADERS }).catch(() => {});
     eventSource = null;
     currentSearchId = null;
   }
