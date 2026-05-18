@@ -2188,10 +2188,13 @@ async def run_search_job(request: SearchRequest, queue: asyncio.Queue, login_eve
         complete  – {}
         error     – {message}
     """
+    logger.info("run_search_job: starting — IS_CLOUD=%s", IS_CLOUD)
     combos = request.get_combinations()
     total = len(combos)
+    logger.info("run_search_job: %d combinations to search", total)
 
     async with async_playwright() as pw:
+        logger.info("run_search_job: launching browser (headless=%s)", IS_CLOUD)
         # Persistent context = real browser profile on disk.
         # - Cathay's site won't detect automation (no AutomationControlled flag)
         # - Login is remembered across runs (stored in PROFILE_DIR)

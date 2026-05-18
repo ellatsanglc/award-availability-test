@@ -60,7 +60,17 @@ async def start_search(request: SearchRequest):
     otp_events[search_id] = otp_event
     otp_holders[search_id] = otp_holder
 
-    task = asyncio.create_task(run_search_job(request, queue, login_event, otp_event, otp_holder))
+    async def _safe_run():
+        try:
+            await run_search_job(request, queue, login_event, otp_event, otp_holder)
+        except Exception as exc:
+            logging.exception("run_search_job crashed: %s", exc)
+            try:
+                await queue.put({"type": "error", "message": f"Search crashed — {type(exc).__name__}: {exc}"})
+            except Exception:
+                pass
+
+    task = asyncio.create_task(_safe_run())
     active_tasks[search_id] = task
 
     return {"search_id": search_id, "total_searches": total}
