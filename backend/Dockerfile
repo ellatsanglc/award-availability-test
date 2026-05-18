@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y \
     wget gnupg ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
+# Force Python to flush logs immediately (otherwise Railway swallows them)
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Install Python packages first (better layer caching)
